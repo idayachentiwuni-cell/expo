@@ -1,0 +1,387 @@
+import Foundation
+import Testing
+
+@testable import ExpoAppMetrics
+
+@Suite("NetworkRequest")
+struct NetworkRequestTests {
+  @Test
+  func `falls back to wall-clock duration when metrics are nil`() {
+    let request = URLRequest(url: URL(string: "https://expo.dev/health")!)
+    let response = HTTPURLResponse(
+      url: request.url!,
+      statusCode: 204,
+      httpVersion: "HTTP/1.1",
+      headerFields: nil
+    )!
+    let start = Date(timeIntervalSinceReferenceDate: 1000)
+    let end = Date(timeIntervalSinceReferenceDate: 1000.42)
+
+    let snapshot = NetworkRequest.from(
+      id: UUID(),
+      request: request,
+      response: response,
+      task: nil,
+      metrics: nil,
+      fallbackStart: start,
+      fallbackEnd: end,
+      error: nil
+    )
+
+    #expect(snapshot.statusCode == 204)
+    #expect(snapshot.method == "GET")
+    #expect(snapshot.networkProtocol == nil)
+    #expect(snapshot.requestBytesSent == nil)
+    #expect(snapshot.responseBytesReceived == nil)
+    #expect(snapshot.wasCached == false)
+    #expect(snapshot.timings.totalDuration == 0.42)
+    #expect(snapshot.timings.fetchStart == start)
+    #expect(snapshot.timings.responseEnd == end)
+    #expect(snapshot.errorDescription == nil)
+  }
+
+  @Test
+  func `captures method override and error description`() {
+    var request = URLRequest(url: URL(string: "https://expo.dev/api")!)
+    request.httpMethod = "POST"
+    let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: nil)
+    let now = Date()
+
+    let snapshot = NetworkRequest.from(
+      id: UUID(),
+      request: request,
+      response: nil,
+      task: nil,
+      metrics: nil,
+      fallbackStart: now,
+      fallbackEnd: now,
+      error: error
+    )
+
+    #expect(snapshot.method == "POST")
+    #expect(snapshot.statusCode == nil)
+    #expect(snapshot.errorDescription != nil)
+  }
+}
+
+@AppMetricsActor
+@Suite("NetworkRequestMonitor")
+struct NetworkRequestMonitorTests {
+  @Test
+  func `records snapshots and fans out to delegates`() {
+    let monitor = NetworkRequestMonitor()
+    let collector = CollectingDelegate()
+    monitor.addDelegate(collector)
+
+    let snapshot = NetworkRequest.from(
+      id: UUID(),
+      request: URLRequest(url: URL(string: "https://expo.dev/x")!),
+      response: HTTPURLResponse(url: URL(string: "https://expo.dev/x")!, statusCode: 200, httpVersion: nil, headerFields: nil),
+      task: nil,
+      metrics: nil,
+      fallbackStart: Date(),
+      fallbackEnd: Date(),
+      error: nil
+    )
+    monitor.record(snapshot)
+
+    #expect(monitor.recent.count == 1)
+    #expect(monitor.recent.first?.id == snapshot.id)
+    #expect(collector.received.count == 1)
+  }
+
+  @Test
+  func `bounds the ring buffer`() {
+    let monitor = NetworkRequestMonitor()
+    let url = URL(string: "https://expo.dev/x")!
+    for _ in 0..<250 {
+      let snapshot = NetworkRequest.from(
+        id: UUID(),
+        request: URLRequest(url: url),
+        response: nil,
+        task: nil,
+        metrics: nil,
+        fallbackStart: Date(),
+        fallbackEnd: Date(),
+        error: nil
+      )
+      monitor.record(snapshot)
+    }
+    #expect(monitor.recent.count == 200)
+  }
+}
+
+@Suite("NetworkRequestSummary")
+struct NetworkRequestSummaryTests {
+  @Test
+  func `empty when no requests are passed in`() {
+    let summary = NetworkRequestSummary.from([])
+    #expect(summary.isEmpty)
+    #expect(summary.count == 0)
+    #expect(summary.slowestHost == nil)
+  }
+
+  @Test
+  func `aggregates count, failures, bytes, durations and slowest`() {
+    let now = Date()
+    let fast = makeRequest(
+      host: "api.expo.dev",
+      duration: 0.1,
+      status: 200,
+      bytesSent: 100,
+      bytesReceived: 200,
+      fetchStart: now
+    )
+    let slow = makeRequest(
+      host: "cdn.expo.dev",
+      duration: 0.8,
+      status: 200,
+      bytesSent: 50,
+      bytesReceived: 9000,
+      fetchStart: now
+    )
+    let failed = makeRequest(
+      host: "broken.expo.dev",
+      duration: 0.3,
+      status: 503,
+      bytesSent: 30,
+      bytesReceived: 40,
+      fetchStart: now
+    )
+
+    let summary = NetworkRequestSummary.from([fast, slow, failed])
+    #expect(summary.count == 3)
+    #expect(summary.failed == 1)
+    #expect(summary.bytesSent == 180)
+    #expect(summary.bytesReceived == 9240)
+    #expect(abs(summary.totalDuration - 1.2) < 0.0001)
+    #expect(summary.slowestDuration == 0.8)
+    #expect(summary.slowestHost == "cdn.expo.dev")
+  }
+
+  @Test
+  func `counts errored requests without a status as failed`() {
+    let request = makeRequest(
+      host: "expo.dev",
+      duration: 0.2,
+      status: nil,
+      bytesSent: 0,
+      bytesReceived: 0,
+      fetchStart: Date(),
+      error: "timed out"
+    )
+    let summary = NetworkRequestSummary.from([request])
+    #expect(summary.failed == 1)
+  }
+
+  private func makeRequest(
+    host: String,
+    duration: TimeInterval,
+    status: Int?,
+    bytesSent: Int64,
+    bytesReceived: Int64,
+    fetchStart: Date,
+    error: String? = nil
+  ) -> NetworkRequest {
+    return NetworkRequest(
+      id: UUID(),
+      url: URL(string: "https://\(host)/x")!,
+      method: "GET",
+      statusCode: status,
+      networkProtocol: nil,
+      requestBytesSent: bytesSent,
+      responseBytesReceived: bytesReceived,
+      wasCached: false,
+      timings: NetworkRequest.Timings(
+        fetchStart: fetchStart,
+        domainLookupStart: nil,
+        domainLookupEnd: nil,
+        connectStart: nil,
+        connectEnd: nil,
+        secureConnectionStart: nil,
+        secureConnectionEnd: nil,
+        requestStart: nil,
+        requestEnd: nil,
+        responseStart: nil,
+        responseEnd: nil,
+        totalDuration: duration
+      ),
+      errorDescription: error
+    )
+  }
+}
+
+@AppMetricsActor
+@Suite("NetworkRequestMonitor windowing")
+struct NetworkRequestMonitorWindowingTests {
+  @Test
+  func `filters by fetchStart inclusive on both ends`() {
+    let monitor = NetworkRequestMonitor()
+    let early = makeSnapshot(fetchStart: Date(timeIntervalSinceReferenceDate: 0))
+    let inside = makeSnapshot(fetchStart: Date(timeIntervalSinceReferenceDate: 50))
+    let late = makeSnapshot(fetchStart: Date(timeIntervalSinceReferenceDate: 100))
+    monitor.record(early)
+    monitor.record(inside)
+    monitor.record(late)
+
+    let summary = monitor.summarize(
+      start: Date(timeIntervalSinceReferenceDate: 10),
+      end: Date(timeIntervalSinceReferenceDate: 90)
+    )
+    #expect(summary.count == 1)
+  }
+
+  private func makeSnapshot(fetchStart: Date) -> NetworkRequest {
+    return NetworkRequest(
+      id: UUID(),
+      url: URL(string: "https://expo.dev/x")!,
+      method: "GET",
+      statusCode: 200,
+      networkProtocol: nil,
+      requestBytesSent: 0,
+      responseBytesReceived: 0,
+      wasCached: false,
+      timings: NetworkRequest.Timings(
+        fetchStart: fetchStart,
+        domainLookupStart: nil,
+        domainLookupEnd: nil,
+        connectStart: nil,
+        connectEnd: nil,
+        secureConnectionStart: nil,
+        secureConnectionEnd: nil,
+        requestStart: nil,
+        requestEnd: nil,
+        responseStart: nil,
+        responseEnd: nil,
+        totalDuration: 0.1
+      ),
+      errorDescription: nil
+    )
+  }
+}
+
+@Suite("NetworkRequestURLProtocol")
+struct NetworkRequestURLProtocolTests {
+  /**
+   End-to-end loopback test: a `URLSession` configured with `NetworkRequestURLProtocol` first and
+   `FakeServerProtocol` second issues a request. Our protocol forwards through an inner session
+   that *also* lists `FakeServerProtocol`, so the fake delivers the response and the protocol
+   records a snapshot.
+   */
+  @Test
+  func `observes a request that completes via the fake server`() async throws {
+    NetworkRequestURLProtocol.overrideSharedSession(
+      NetworkRequestURLProtocol.makeForwardingSession(extraProtocols: [FakeServerProtocol.self])
+    )
+    defer {
+      NetworkRequestURLProtocol.overrideSharedSession(nil)
+    }
+    await clearMonitor()
+
+    let outerConfig = URLSessionConfiguration.ephemeral
+    outerConfig.protocolClasses = [NetworkRequestURLProtocol.self, FakeServerProtocol.self]
+    let session = URLSession(configuration: outerConfig)
+
+    let url = URL(string: "https://fake.test/hello")!
+    let (data, response) = try await session.data(from: url)
+
+    #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    #expect(String(data: data, encoding: .utf8) == "hi")
+
+    // The snapshot is recorded asynchronously via AppMetricsActor.isolated — give it a chance to
+    // run before reading.
+    let recorded = await waitForRecorded(matching: url)
+    #expect(recorded != nil)
+    #expect(recorded?.statusCode == 200)
+  }
+
+  @Test
+  func `skips requests that carry the internal opt-out header`() async throws {
+    NetworkRequestURLProtocol.overrideSharedSession(
+      NetworkRequestURLProtocol.makeForwardingSession(extraProtocols: [FakeServerProtocol.self])
+    )
+    defer {
+      NetworkRequestURLProtocol.overrideSharedSession(nil)
+    }
+    await clearMonitor()
+
+    let outerConfig = URLSessionConfiguration.ephemeral
+    outerConfig.protocolClasses = [NetworkRequestURLProtocol.self, FakeServerProtocol.self]
+    let session = URLSession(configuration: outerConfig)
+
+    var request = URLRequest(url: URL(string: "https://fake.test/internal")!)
+    request.setValue("1", forHTTPHeaderField: NetworkRequestURLProtocol.internalHeaderName)
+    _ = try await session.data(for: request)
+
+    // Sleep briefly to let any stray recording attempt complete.
+    try await Task.sleep(nanoseconds: 50_000_000)
+    let recorded = await AppMetricsActor.isolated {
+      return NetworkRequestMonitor.shared.recent.first(where: { $0.url.path == "/internal" })
+    }.value
+    #expect(recorded == nil)
+  }
+
+  private func clearMonitor() async {
+    // No public clear API on the shared monitor — tests filter by URL when reading instead.
+  }
+
+  private func waitForRecorded(matching url: URL, attempts: Int = 50) async -> NetworkRequest? {
+    for _ in 0..<attempts {
+      let found = await AppMetricsActor.isolated {
+        return NetworkRequestMonitor.shared.recent.first(where: { $0.url == url })
+      }.value
+      if let found {
+        return found
+      }
+      try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    return nil
+  }
+}
+
+// MARK: - Test helpers
+
+private final class CollectingDelegate: NetworkRequestObserverDelegate, @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [NetworkRequest] = []
+
+  var received: [NetworkRequest] {
+    lock.lock()
+    defer {
+      lock.unlock()
+    }
+    return storage
+  }
+
+  func onNetworkRequestCompleted(_ request: NetworkRequest) {
+    lock.lock()
+    defer {
+      lock.unlock()
+    }
+    storage.append(request)
+  }
+}
+
+/**
+ A trivial `URLProtocol` that pretends to be a server: returns 200 with a `hi` body for any
+ request. Sits at the tail of the protocol chain in the test's outer session.
+ */
+private final class FakeServerProtocol: URLProtocol {
+  override class func canInit(with request: URLRequest) -> Bool {
+    return request.url?.host == "fake.test"
+  }
+
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+    return request
+  }
+
+  override func startLoading() {
+    let url = request.url!
+    let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: Data("hi".utf8))
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
+}

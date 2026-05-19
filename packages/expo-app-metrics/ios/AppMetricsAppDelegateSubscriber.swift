@@ -3,8 +3,17 @@ import ExpoModulesCore
 public class AppMetricsAppDelegateSubscriber: ExpoAppDelegateSubscriber {
   public func appDelegateWillBeginInitialization() {
     AppMetrics.mainSession.appStartupMonitor.markMain()
+    // `URLProtocol.registerClass` must run before RN's first network request so we catch it. The
+    // configuration swizzle is on by default — set `EX_APP_METRICS_NO_INTERCEPT_URLSESSION=1` in
+    // the podspec env to disable. Without the swizzle, any session built from a fresh
+    // `URLSessionConfiguration.default`/`.ephemeral` (including React Native's networking) is
+    // invisible.
+    #if !EX_APP_METRICS_NO_INTERCEPT_URLSESSION
+    NetworkRequestConfigurationSwizzling.install(protocolClass: NetworkRequestURLProtocol.self)
+    #endif
     AppMetricsActor.isolated {
       NetworkPathMonitor.shared.start()
+      NetworkRequestMonitor.shared.start()
     }
   }
 

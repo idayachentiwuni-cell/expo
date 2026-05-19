@@ -151,7 +151,13 @@ internal struct ObservabilityManager {
   private static func sendRequest(to endpointUrl: URL, body: any Encodable) async throws -> Bool {
     var request = URLRequest(url: endpointUrl)
     request.httpMethod = "POST"
-    request.allHTTPHeaderFields = ["Content-Type": "application/json"]
+    request.allHTTPHeaderFields = [
+      "Content-Type": "application/json",
+      // Tells `NetworkRequestURLProtocol` to skip observation so our own telemetry uploads don't
+      // get logged back into the network-request stream. The header reaches o.expo.dev unchanged
+      // (we control that endpoint, so 1 byte of harmless overhead is fine).
+      "X-Expo-AppMetrics-Internal": "1"
+    ]
     request.httpBody = try body.toJSONData([])
 
     #if DEBUG
