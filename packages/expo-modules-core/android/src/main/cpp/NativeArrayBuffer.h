@@ -49,7 +49,8 @@ public:
   );
 
   /**
-   * Allocates a new NativeArrayBuffer by copying the contents of the given ArrayBuffer.
+   * Creates a NativeArrayBuffer from the given ArrayBuffer. Uses zero-copy when the
+   * buffer is native-backed (tryGetMutableBuffer), otherwise copies the data.
    */
   static jni::local_ref<NativeArrayBuffer::javaobject> newInstance(
     JSIContext *jsiContext,
@@ -58,8 +59,8 @@ public:
   );
 
   /**
-   * Allocates a new NativeArrayBuffer by copying only the bytes within the typed array's
-   * view range — not the entire backing buffer.
+   * Creates a NativeArrayBuffer from the typed array's view range. Uses zero-copy
+   * when the backing buffer is native-backed, otherwise copies only the viewed bytes.
    */
   static jni::local_ref<NativeArrayBuffer::javaobject> newInstance(
     JSIContext *jsiContext,
@@ -68,6 +69,11 @@ public:
   );
 
   explicit NativeArrayBuffer(const jni::alias_ref<jni::JByteBuffer>& byteBuffer);
+
+  NativeArrayBuffer(
+    const jni::alias_ref<jni::JByteBuffer>& byteBuffer,
+    std::shared_ptr<jsi::MutableBuffer> retainedBuffer
+  );
 
   [[nodiscard]] int size();
 
@@ -82,6 +88,7 @@ public:
 
 private:
   std::shared_ptr<ByteBufferJSIWrapper> buffer;
+  std::shared_ptr<jsi::MutableBuffer> retainedMutableBuffer_;
 };
 
 } // namespace expo

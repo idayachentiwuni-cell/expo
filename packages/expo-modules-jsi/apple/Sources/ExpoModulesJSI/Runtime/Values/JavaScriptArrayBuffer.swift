@@ -45,6 +45,25 @@ public struct JavaScriptArrayBuffer: ~Copyable {
     return newBuffer
   }
 
+  // MARK: - Zero-copy borrowing
+
+  /**
+   Attempts to obtain the underlying native MutableBuffer without copying.
+   Returns `nil` if the buffer is JS-heap-allocated (no MutableBuffer available).
+   On success, the returned `release` closure must be called when the data is no longer needed.
+   */
+  public func tryBorrowMutableBuffer() -> (data: UnsafeMutablePointer<UInt8>, size: Int, release: @Sendable () -> Void)? {
+    guard let runtime else {
+      FatalError.runtimeLost()
+    }
+    let borrowed = expo.tryBorrowMutableBuffer(runtime.pointee, pointee)
+    guard let data = borrowed.data, let retainer = borrowed.retainer else {
+      return nil
+    }
+    let retainerBox = BorrowedBufferRetainer(retainer)
+    return (data: data, size: Int(borrowed.size), release: { retainerBox.release() })
+  }
+
   // MARK: - Conversions
 
   /// Returns this array buffer as a `JavaScriptValue`.
@@ -62,5 +81,17 @@ public struct JavaScriptArrayBuffer: ~Copyable {
       FatalError.runtimeLost()
     }
     return JavaScriptValue(runtime, pointee.getProperty(runtime.pointee, name))
+  }
+}
+
+private final class BorrowedBufferRetainer: @unchecked Sendable {
+  private let retainer: UnsafeMutableRawPointer
+
+  init(_ retainer: UnsafeMutableRawPointer) {
+    self.retainer = retainer
+  }
+
+  func release() {
+    expo.releaseBorrowedBuffer(retainer)
   }
 }

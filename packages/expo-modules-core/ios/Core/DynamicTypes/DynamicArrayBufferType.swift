@@ -52,6 +52,9 @@ internal struct DynamicArrayBufferType: AnyDynamicType {
 
     switch innerType {
     case is NativeArrayBuffer.Type:
+      if let borrowed = jsArrayBuffer.tryBorrowMutableBuffer() {
+        return NativeArrayBuffer(wrapping: UnsafeMutableRawPointer(borrowed.data), count: borrowed.size, cleanup: borrowed.release)
+      }
       return NativeArrayBuffer.copy(of: UnsafeRawPointer(jsArrayBuffer.data()), count: jsArrayBuffer.size)
     default:
       return ArrayBuffer(jsArrayBuffer)

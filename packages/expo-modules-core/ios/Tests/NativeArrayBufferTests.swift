@@ -266,6 +266,28 @@ struct NativeArrayBufferTests {
       #expect(originalValues.allSatisfy { $0 == 42 } == true)  // Original unchanged
       #expect(processedValues.allSatisfy { $0 == 99 } == true) // Processed has new pattern
     }
+
+    @Test
+    func `shares native-backed buffer when using NativeArrayBuffer argument`() throws {
+      let processedBuffer = try runtime.eval([
+        "nativeBackedBuffer = expo.modules.ArrayBufferTests.createNative(4)",
+        "new Uint8Array(nativeBackedBuffer).fill(42)",
+        "processedBuffer = expo.modules.ArrayBufferTests.processNativeBuffer(nativeBackedBuffer, 99)",
+        "processedBuffer"
+      ]).asArrayBuffer()
+
+      let originalValues = try runtime.eval([
+        "Array.from(new Uint8Array(nativeBackedBuffer))"
+      ]).asArray().map { try $0.asInt() }
+
+      let processedValues = try runtime.eval([
+        "Array.from(new Uint8Array(processedBuffer))"
+      ]).asArray().map { try $0.asInt() }
+
+      #expect(processedBuffer.byteLength == 4)
+      #expect(originalValues.allSatisfy { $0 == 99 } == true)
+      #expect(processedValues.allSatisfy { $0 == 99 } == true)
+    }
   }
 
   // MARK: - Error handling
