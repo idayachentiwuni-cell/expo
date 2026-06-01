@@ -256,16 +256,19 @@ export type NetworkRequestStartedEvent = {
     startedAt: string;
 };
 /**
- * One hop in a redirect chain. Each entry reads as "the previous URL returned `statusCode`,
- * redirecting us to `url`." The parent `NetworkRequestCompletedEvent.url` is the original URL
- * the caller requested; the last entry's `url` is where the request actually landed.
+ * One hop in a redirect chain. `fromUrl` issued the 3xx response, `toUrl` is where it pointed.
+ * For a complete chain the first entry's `fromUrl` matches the parent
+ * `NetworkRequestCompletedEvent.url`, and the last entry's `toUrl` is where the request
+ * actually landed.
  *
  * @platform ios
  */
 export type NetworkRequestRedirect = {
-    /** The URL the request was redirected *to*. */
-    url: string;
-    /** The 3xx status code (301, 302, 307, 308, …) returned by the previous URL. */
+    /** The URL that returned the redirect. */
+    fromUrl: string;
+    /** The URL the request was redirected to. */
+    toUrl: string;
+    /** The 3xx status code (301, 302, 307, 308, …) returned by `fromUrl`. */
     statusCode: number;
 };
 /**

@@ -206,10 +206,10 @@ function RequestRow({ row }: { row: Row }) {
         <View style={styles.redirectList}>
           {row.redirects.map((r, index) => (
             <Text
-              key={`${r.url}-${index}`}
+              key={`${r.toUrl}-${index}`}
               numberOfLines={1}
               style={[styles.redirects, { color: theme.text.secondary }]}>
-              via {r.statusCode} {r.url}
+              via {r.statusCode} {r.toUrl}
             </Text>
           ))}
         </View>

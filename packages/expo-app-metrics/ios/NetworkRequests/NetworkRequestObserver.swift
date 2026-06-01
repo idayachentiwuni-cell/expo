@@ -63,7 +63,8 @@ public final class NetworkRequestObserver: SharedObject, NetworkRequestObserverD
       "totalDuration": request.timings.totalDuration,
       "redirects": request.redirects.map {
         return [
-          "url": $0.url.absoluteString,
+          "fromUrl": $0.fromUrl.absoluteString,
+          "toUrl": $0.toUrl.absoluteString,
           "statusCode": $0.statusCode
         ]
       }

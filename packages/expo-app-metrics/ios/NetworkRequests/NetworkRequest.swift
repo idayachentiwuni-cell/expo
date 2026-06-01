@@ -53,16 +53,19 @@ public struct NetworkRequest: Sendable, Equatable, Identifiable {
 
   /**
    Ordered list of redirect hops that preceded the final response. Empty when the task returned
-   directly. The parent `url` is the URL the caller originally requested; the last entry's `url`
-   is where the request actually landed. Each entry reads as "the previous URL returned this
-   status code, redirecting us here."
+   directly. Each entry describes one hop: `fromUrl` is the URL that returned the redirect,
+   `statusCode` is the 3xx code it returned, and `toUrl` is where the redirect pointed. For a
+   complete chain the first entry's `fromUrl` equals the parent event's `url`, and the last
+   entry's `toUrl` is where the request actually landed.
    */
   public let redirects: [Redirect]
 
   public struct Redirect: Sendable, Equatable {
-    /** The URL the request was redirected *to*. */
-    public let url: URL
-    /** The 3xx status code returned by the previous URL that caused this hop. */
+    /** The URL that returned the redirect. */
+    public let fromUrl: URL
+    /** The URL the request was redirected to. */
+    public let toUrl: URL
+    /** The 3xx status code returned by `fromUrl` that caused this hop. */
     public let statusCode: Int
   }
 
@@ -172,10 +175,9 @@ extension NetworkRequest {
       return task?.countOfBytesReceived
     }()
 
-    // Each redirect entry pairs a 3xx status from one transaction with the URL of the *next*
-    // transaction — i.e. "the previous URL returned this status code, redirecting us here." The
-    // first transaction's URL is therefore not in the array (it's the parent event's `url`); the
-    // last entry's URL is where the request actually landed.
+    // Each redirect entry pairs the 3xx status from one transaction with the URLs on either side
+    // of the hop: `fromUrl` is the URL we requested that returned the redirect, `toUrl` is the
+    // URL the redirect pointed to (which is the next transaction's request URL).
     //
     // `transactionMetrics` can contain non-redirect transactions too (HTTP/2 → HTTP/3 Alt-Svc
     // upgrades, connection retries, HTTP → HTTPS upgrades), so we filter explicitly on 3xx
@@ -191,11 +193,12 @@ extension NetworkRequest {
         guard
           let response = current.response as? HTTPURLResponse,
           (300..<400).contains(response.statusCode),
-          let url = next.request.url
+          let fromUrl = current.request.url,
+          let toUrl = next.request.url
         else {
           continue
         }
-        result.append(Redirect(url: url, statusCode: response.statusCode))
+        result.append(Redirect(fromUrl: fromUrl, toUrl: toUrl, statusCode: response.statusCode))
       }
       return result
     }()
