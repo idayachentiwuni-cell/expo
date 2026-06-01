@@ -305,7 +305,7 @@ struct NetworkRequestURLProtocolTests {
     let session = URLSession(configuration: outerConfig)
 
     let collector = CollectingDelegate()
-    await AppMetricsActor.isolated {
+    try await AppMetricsActor.isolated {
       NetworkRequestMonitor.shared.addDelegate(collector)
     }.value
 
@@ -349,7 +349,7 @@ struct NetworkRequestURLProtocolTests {
 
     // Sleep briefly to let any stray recording attempt complete.
     try await Task.sleep(nanoseconds: 50_000_000)
-    let recorded = await AppMetricsActor.isolated {
+    let recorded = try await AppMetricsActor.isolated {
       return NetworkRequestMonitor.shared.recent.first(where: { $0.url.path == "/internal" })
     }.value
     #expect(recorded == nil)
@@ -393,7 +393,7 @@ struct NetworkRequestURLProtocolTests {
 
   private func waitForRecorded(matching url: URL, attempts: Int = 50) async -> NetworkRequest? {
     for _ in 0..<attempts {
-      let found = await AppMetricsActor.isolated {
+      let found = try? await AppMetricsActor.isolated {
         return NetworkRequestMonitor.shared.recent.first(where: { $0.url == url })
       }.value
       if let found {
