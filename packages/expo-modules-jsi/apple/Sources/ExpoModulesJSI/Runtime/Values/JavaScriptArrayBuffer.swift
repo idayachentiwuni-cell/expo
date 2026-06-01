@@ -47,11 +47,9 @@ public struct JavaScriptArrayBuffer: ~Copyable {
 
   // MARK: - Zero-copy borrowing
 
-  /**
-   Attempts to obtain the underlying native MutableBuffer without copying.
-   Returns `nil` if the buffer is JS-heap-allocated (no MutableBuffer available).
-   On success, the returned `release` closure must be called when the data is no longer needed.
-   */
+  /// Attempts to obtain the underlying native MutableBuffer without copying.
+  /// Returns `nil` if the buffer is JS-heap-allocated (no MutableBuffer available).
+  /// On success, the returned `release` closure must be called when the data is no longer needed.
   public func tryBorrowMutableBuffer() -> (data: UnsafeMutablePointer<UInt8>, size: Int, release: @Sendable () -> Void)?
   {
     guard let runtime else {
