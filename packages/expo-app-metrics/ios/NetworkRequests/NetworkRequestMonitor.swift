@@ -3,10 +3,18 @@
 import Foundation
 
 /**
- Receives notifications about completed HTTP requests observed by `NetworkRequestURLProtocol`.
+ Receives notifications about HTTP requests observed by `NetworkRequestURLProtocol`. Both methods
+ have default no-op implementations so delegates can opt into either start- or complete-time
+ notifications without having to implement the other.
  */
 public protocol NetworkRequestObserverDelegate: AnyObject, Sendable {
+  func onNetworkRequestStarted(_ request: NetworkRequestStarted)
   func onNetworkRequestCompleted(_ request: NetworkRequest)
+}
+
+public extension NetworkRequestObserverDelegate {
+  func onNetworkRequestStarted(_ request: NetworkRequestStarted) {}
+  func onNetworkRequestCompleted(_ request: NetworkRequest) {}
 }
 
 /**
@@ -93,6 +101,18 @@ public final class NetworkRequestMonitor: Sendable {
     pruneDelegates()
     for entry in delegates {
       entry.value?.onNetworkRequestCompleted(request)
+    }
+  }
+
+  /**
+   Records that a request has begun. No ring-buffer entry — the started snapshot is purely a
+   notification used to surface in-flight state to subscribers. The corresponding completion
+   event will arrive later with a matching `id`.
+   */
+  func recordStart(_ request: NetworkRequestStarted) {
+    pruneDelegates()
+    for entry in delegates {
+      entry.value?.onNetworkRequestStarted(request)
     }
   }
 

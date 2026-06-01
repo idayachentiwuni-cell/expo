@@ -91,6 +91,26 @@ struct NetworkRequestMonitorTests {
   }
 
   @Test
+  func `recordStart fans out to delegates without touching the ring buffer`() {
+    let monitor = NetworkRequestMonitor()
+    let collector = CollectingDelegate()
+    monitor.addDelegate(collector)
+
+    let started = NetworkRequestStarted(
+      id: UUID(),
+      url: URL(string: "https://expo.dev/x")!,
+      method: "GET",
+      startedAt: Date()
+    )
+    monitor.recordStart(started)
+
+    #expect(collector.receivedStarts.count == 1)
+    #expect(collector.receivedStarts.first?.id == started.id)
+    // The ring buffer holds completed snapshots only.
+    #expect(monitor.recent.isEmpty)
+  }
+
+  @Test
   func `bounds the ring buffer`() {
     let monitor = NetworkRequestMonitor()
     let url = URL(string: "https://expo.dev/x")!
@@ -206,7 +226,8 @@ struct NetworkRequestSummaryTests {
         responseEnd: nil,
         totalDuration: duration
       ),
-      errorDescription: error
+      errorDescription: error,
+      redirects: []
     )
   }
 }
@@ -255,7 +276,8 @@ struct NetworkRequestMonitorWindowingTests {
         responseEnd: nil,
         totalDuration: 0.1
       ),
-      errorDescription: nil
+      errorDescription: nil,
+      redirects: []
     )
   }
 }
@@ -282,6 +304,11 @@ struct NetworkRequestURLProtocolTests {
     outerConfig.protocolClasses = [NetworkRequestURLProtocol.self, FakeServerProtocol.self]
     let session = URLSession(configuration: outerConfig)
 
+    let collector = CollectingDelegate()
+    await AppMetricsActor.isolated {
+      NetworkRequestMonitor.shared.addDelegate(collector)
+    }.value
+
     let url = URL(string: "https://fake.test/hello")!
     let (data, response) = try await session.data(from: url)
 
@@ -293,6 +320,13 @@ struct NetworkRequestURLProtocolTests {
     let recorded = await waitForRecorded(matching: url)
     #expect(recorded != nil)
     #expect(recorded?.statusCode == 200)
+
+    // The protocol also publishes a started event before the request resolves, sharing its id
+    // with the completed snapshot for correlation in JS.
+    let startEvent = collector.receivedStarts.first { $0.url == url }
+    #expect(startEvent != nil)
+    #expect(startEvent?.method == "GET")
+    #expect(startEvent?.id == recorded?.id)
   }
 
   @Test
@@ -343,14 +377,31 @@ struct NetworkRequestURLProtocolTests {
 
 private final class CollectingDelegate: NetworkRequestObserverDelegate, @unchecked Sendable {
   private let lock = NSLock()
-  private var storage: [NetworkRequest] = []
+  private var completed: [NetworkRequest] = []
+  private var started: [NetworkRequestStarted] = []
 
   var received: [NetworkRequest] {
     lock.lock()
     defer {
       lock.unlock()
     }
-    return storage
+    return completed
+  }
+
+  var receivedStarts: [NetworkRequestStarted] {
+    lock.lock()
+    defer {
+      lock.unlock()
+    }
+    return started
+  }
+
+  func onNetworkRequestStarted(_ request: NetworkRequestStarted) {
+    lock.lock()
+    defer {
+      lock.unlock()
+    }
+    started.append(request)
   }
 
   func onNetworkRequestCompleted(_ request: NetworkRequest) {
@@ -358,7 +409,7 @@ private final class CollectingDelegate: NetworkRequestObserverDelegate, @uncheck
     defer {
       lock.unlock()
     }
-    storage.append(request)
+    completed.append(request)
   }
 }
 

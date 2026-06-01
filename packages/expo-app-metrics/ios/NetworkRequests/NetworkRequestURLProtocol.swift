@@ -87,6 +87,17 @@ final class NetworkRequestURLProtocol: URLProtocol {
     let task = session.dataTask(with: mutable as URLRequest)
     Self.bridge.attach(self, to: task)
     sessionTask = task
+
+    let started = NetworkRequestStarted(
+      id: observationId,
+      url: mutable.url ?? URL(string: "about:blank")!,
+      method: mutable.httpMethod ?? "GET",
+      startedAt: startDate
+    )
+    AppMetricsActor.isolated {
+      NetworkRequestMonitor.shared.recordStart(started)
+    }
+
     task.resume()
   }
 
@@ -134,14 +145,16 @@ final class NetworkRequestURLProtocol: URLProtocol {
   }
 
   fileprivate func willPerform(redirect response: HTTPURLResponse, newRequest: URLRequest) -> URLRequest? {
-    // Strip our handled marker so the redirected request can be inspected by the protocol chain
-    // afresh, then let the client decide.
-    let cleaned = (newRequest as NSURLRequest).mutableCopy() as? NSMutableURLRequest ?? NSMutableURLRequest()
-    URLProtocol.removeProperty(forKey: Self.handledMarkerKey, in: cleaned)
-    client?.urlProtocol(self, wasRedirectedTo: cleaned as URLRequest, redirectResponse: response)
-    // Returning nil here cancels the redirect; the outer `URLSession` will surface the redirect
-    // as a separate request, which we'll observe on its own.
-    return nil
+    // Follow the redirect inside the same task so it counts as one logical fetch from the
+    // observer's perspective: one `requestStarted` when the caller fired off the request, one
+    // `requestCompleted` when the final response lands. This matches what backends and OTel
+    // semantic conventions expect (one span per logical HTTP operation).
+    //
+    // `URLSessionTaskMetrics.transactionMetrics.last` aggregates the byte counts/timings of the
+    // final hop — which is what `NetworkRequest.from` already reads — so duration and bytes
+    // are correct for the chain as a whole. Per-hop diagnostic detail (if we ever expose it) can
+    // come from the full `transactionMetrics` array.
+    return newRequest
   }
 
   // MARK: - Static state

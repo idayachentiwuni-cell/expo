@@ -51,6 +51,21 @@ public struct NetworkRequest: Sendable, Equatable, Identifiable {
    */
   public let errorDescription: String?
 
+  /**
+   Ordered list of redirect hops that preceded the final response. Empty when the task returned
+   directly. The parent `url` is the URL the caller originally requested; the last entry's `url`
+   is where the request actually landed. Each entry reads as "the previous URL returned this
+   status code, redirecting us here."
+   */
+  public let redirects: [Redirect]
+
+  public struct Redirect: Sendable, Equatable {
+    /** The URL the request was redirected *to*. */
+    public let url: URL
+    /** The 3xx status code returned by the previous URL that caused this hop. */
+    public let statusCode: Int
+  }
+
   public struct Timings: Sendable, Equatable {
     /** When the task was started (`URLSessionTaskTransactionMetrics.fetchStartDate`). */
     public let fetchStart: Date?
@@ -82,6 +97,18 @@ public struct NetworkRequest: Sendable, Equatable, Identifiable {
      */
     public let totalDuration: TimeInterval
   }
+}
+
+/**
+ Lightweight snapshot emitted when a request begins, before any response or timing data exists.
+ Shares its `id` with the corresponding completion-time `NetworkRequest`, so JS subscribers can
+ correlate the two events.
+ */
+public struct NetworkRequestStarted: Sendable, Equatable, Identifiable {
+  public let id: UUID
+  public let url: URL
+  public let method: String
+  public let startedAt: Date
 }
 
 extension NetworkRequest {
@@ -145,6 +172,34 @@ extension NetworkRequest {
       return task?.countOfBytesReceived
     }()
 
+    // Each redirect entry pairs a 3xx status from one transaction with the URL of the *next*
+    // transaction — i.e. "the previous URL returned this status code, redirecting us here." The
+    // first transaction's URL is therefore not in the array (it's the parent event's `url`); the
+    // last entry's URL is where the request actually landed.
+    //
+    // `transactionMetrics` can contain non-redirect transactions too (HTTP/2 → HTTP/3 Alt-Svc
+    // upgrades, connection retries, HTTP → HTTPS upgrades), so we filter explicitly on 3xx
+    // status codes rather than assuming "everything before the last is a redirect."
+    let redirects: [Redirect] = {
+      guard let transactions = metrics?.transactionMetrics, transactions.count > 1 else {
+        return []
+      }
+      var result: [Redirect] = []
+      for index in 0..<(transactions.count - 1) {
+        let current = transactions[index]
+        let next = transactions[index + 1]
+        guard
+          let response = current.response as? HTTPURLResponse,
+          (300..<400).contains(response.statusCode),
+          let url = next.request.url
+        else {
+          continue
+        }
+        result.append(Redirect(url: url, statusCode: response.statusCode))
+      }
+      return result
+    }()
+
     return NetworkRequest(
       id: id,
       url: url,
@@ -155,7 +210,8 @@ extension NetworkRequest {
       responseBytesReceived: responseBytesReceived,
       wasCached: wasCached,
       timings: timings,
-      errorDescription: error.map { ($0 as NSError).localizedDescription }
+      errorDescription: error.map { ($0 as NSError).localizedDescription },
+      redirects: redirects
     )
   }
 }
