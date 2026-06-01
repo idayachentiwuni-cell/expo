@@ -444,7 +444,10 @@ export interface ExpoAppMetricsModuleType {
    * Construct an instance to begin receiving `requestStarted`/`requestCompleted` events;
    * release the instance (drop all references) to stop.
    *
+   * Only present on iOS — guard with `if (AppMetrics.NetworkRequestObserver) { ... }` in
+   * cross-platform code.
+   *
    * @platform ios
    */
-  NetworkRequestObserver: typeof NetworkRequestObserver;
+  NetworkRequestObserver?: typeof NetworkRequestObserver;
 }

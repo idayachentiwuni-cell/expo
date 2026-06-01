@@ -43,6 +43,9 @@ export function NetworkRequestObserverSection() {
   const completedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!AppMetrics.NetworkRequestObserver) {
+      return;
+    }
     const observer = new AppMetrics.NetworkRequestObserver();
     const startedSub = observer.addListener(
       'requestStarted',
