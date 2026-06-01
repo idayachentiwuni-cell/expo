@@ -35,19 +35,26 @@ public final class NetworkRequestObserver: SharedObject, NetworkRequestObserverD
   // MARK: - NetworkRequestObserverDelegate
 
   public func onNetworkRequestStarted(_ request: NetworkRequestStarted) {
-    emit(event: REQUEST_STARTED_EVENT, payload: [
+    emit(event: REQUEST_STARTED_EVENT, payload: NetworkRequestObserver.startedPayload(for: request))
+  }
+
+  public func onNetworkRequestCompleted(_ request: NetworkRequest) {
+    emit(event: REQUEST_COMPLETED_EVENT, payload: NetworkRequestObserver.completedPayload(for: request))
+  }
+
+  /** Internal so tests can assert the payload shape without going through `emit`, which needs a
+   live JS runtime. The keys here are part of the public JS contract — additions are safe but
+   renames are breaking. */
+  static func startedPayload(for request: NetworkRequestStarted) -> [String: Any?] {
+    return [
       "id": request.id.uuidString,
       "url": request.url.absoluteString,
       "method": request.method,
       "startedAt": request.startedAt.ISO8601Format()
-    ])
+    ]
   }
 
-  public func onNetworkRequestCompleted(_ request: NetworkRequest) {
-    emit(event: REQUEST_COMPLETED_EVENT, payload: payload(for: request))
-  }
-
-  private func payload(for request: NetworkRequest) -> [String: Any?] {
+  static func completedPayload(for request: NetworkRequest) -> [String: Any?] {
     return [
       "id": request.id.uuidString,
       "url": request.url.absoluteString,

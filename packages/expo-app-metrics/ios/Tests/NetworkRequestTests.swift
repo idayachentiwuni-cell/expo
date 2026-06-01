@@ -405,6 +405,149 @@ struct NetworkRequestURLProtocolTests {
   }
 }
 
+/**
+ The JS-facing observer mostly forwards to `NetworkRequestMonitor`, which is exercised by the
+ `NetworkRequestMonitor` suite. What's specific to the observer is the payload shape — the dict
+ it hands to `emit()` is the wire format JS consumers see. These tests pin that shape down so
+ renames (`fromUrl` → `from`, `responseEnd` → `endedAt`, etc.) require a deliberate change.
+ */
+@Suite("NetworkRequestObserver")
+struct NetworkRequestObserverTests {
+  @Test
+  func `startedPayload contains the started-event keys`() {
+    let id = UUID()
+    let startedAt = Date(timeIntervalSinceReferenceDate: 1000)
+    let request = NetworkRequestStarted(
+      id: id,
+      url: URL(string: "https://expo.dev/start")!,
+      method: "POST",
+      startedAt: startedAt
+    )
+
+    let payload = NetworkRequestObserver.startedPayload(for: request)
+
+    #expect(payload["id"] as? String == id.uuidString)
+    #expect(payload["url"] as? String == "https://expo.dev/start")
+    #expect(payload["method"] as? String == "POST")
+    #expect(payload["startedAt"] as? String == startedAt.ISO8601Format())
+    // Only the four documented keys — anything extra means the JS contract grew unintentionally.
+    #expect(Set(payload.keys) == ["id", "url", "method", "startedAt"])
+  }
+
+  @Test
+  func `completedPayload normalizes timings and redirects`() {
+    let id = UUID()
+    let fetchStart = Date(timeIntervalSinceReferenceDate: 2000)
+    let responseEnd = Date(timeIntervalSinceReferenceDate: 2000.5)
+    let request = NetworkRequest(
+      id: id,
+      url: URL(string: "https://expo.dev/end")!,
+      method: "GET",
+      statusCode: 200,
+      networkProtocol: "h2",
+      requestBytesSent: 123,
+      responseBytesReceived: 4567,
+      wasCached: false,
+      timings: NetworkRequest.Timings(
+        fetchStart: fetchStart,
+        domainLookupStart: nil,
+        domainLookupEnd: nil,
+        connectStart: nil,
+        connectEnd: nil,
+        secureConnectionStart: nil,
+        secureConnectionEnd: nil,
+        requestStart: nil,
+        requestEnd: nil,
+        responseStart: nil,
+        responseEnd: responseEnd,
+        totalDuration: 0.5
+      ),
+      errorDescription: nil,
+      redirects: [
+        NetworkRequest.Redirect(
+          fromUrl: URL(string: "https://expo.dev/a")!,
+          toUrl: URL(string: "https://expo.dev/b")!,
+          statusCode: 301
+        )
+      ]
+    )
+
+    let payload = NetworkRequestObserver.completedPayload(for: request)
+
+    #expect(payload["id"] as? String == id.uuidString)
+    #expect(payload["url"] as? String == "https://expo.dev/end")
+    #expect(payload["method"] as? String == "GET")
+    #expect(payload["statusCode"] as? Int == 200)
+    #expect(payload["networkProtocol"] as? String == "h2")
+    #expect(payload["requestBytesSent"] as? Int == 123)
+    #expect(payload["responseBytesReceived"] as? Int == 4567)
+    #expect(payload["wasCached"] as? Bool == false)
+    #expect(payload["startedAt"] as? String == fetchStart.ISO8601Format())
+    #expect(payload["completedAt"] as? String == responseEnd.ISO8601Format())
+    #expect(payload["totalDuration"] as? TimeInterval == 0.5)
+
+    let redirects = payload["redirects"] as? [[String: Any?]]
+    #expect(redirects?.count == 1)
+    #expect(redirects?.first?["fromUrl"] as? String == "https://expo.dev/a")
+    #expect(redirects?.first?["toUrl"] as? String == "https://expo.dev/b")
+    #expect(redirects?.first?["statusCode"] as? Int == 301)
+  }
+
+  @Test
+  func `completedPayload preserves nulls and empty redirects`() {
+    // Failed request before the response arrived: status, protocol, byte counts and end timestamps
+    // are all nil. The dict keys must still be present so JS code can read them without crashing.
+    let id = UUID()
+    let fetchStart = Date(timeIntervalSinceReferenceDate: 3000)
+    let request = NetworkRequest(
+      id: id,
+      url: URL(string: "https://expo.dev/error")!,
+      method: "GET",
+      statusCode: nil,
+      networkProtocol: nil,
+      requestBytesSent: nil,
+      responseBytesReceived: nil,
+      wasCached: false,
+      timings: NetworkRequest.Timings(
+        fetchStart: fetchStart,
+        domainLookupStart: nil,
+        domainLookupEnd: nil,
+        connectStart: nil,
+        connectEnd: nil,
+        secureConnectionStart: nil,
+        secureConnectionEnd: nil,
+        requestStart: nil,
+        requestEnd: nil,
+        responseStart: nil,
+        responseEnd: nil,
+        totalDuration: 0.1
+      ),
+      errorDescription: "timed out",
+      redirects: []
+    )
+
+    let payload = NetworkRequestObserver.completedPayload(for: request)
+
+    // `payload[key]` returns `Optional<Any?>` because the dict's value type is `Any?`. A missing
+    // key is the outer `.none`; a present-but-nil key is `.some(.none)`. The JS contract says
+    // every key is present, so assert on the outer `.some` and the inner nil separately.
+    #expect(payload.keys.contains("statusCode"))
+    #expect((payload["statusCode"] ?? "missing") as? Int == nil)
+    #expect(payload.keys.contains("networkProtocol"))
+    #expect((payload["networkProtocol"] ?? "missing") as? String == nil)
+    #expect(payload.keys.contains("requestBytesSent"))
+    #expect(payload.keys.contains("completedAt"))
+    #expect((payload["completedAt"] ?? "missing") as? String == nil)
+    #expect(payload["errorDescription"] as? String == "timed out")
+
+    // `redirects` is always present as an empty array, never `nil` — JS callers `.map` over it
+    // without a null-guard.
+    let redirects = payload["redirects"] as? [[String: Any?]]
+    #expect(redirects != nil)
+    #expect(redirects?.isEmpty == true)
+  }
+}
+
 // MARK: - Test helpers
 
 private final class CollectingDelegate: NetworkRequestObserverDelegate, @unchecked Sendable {
