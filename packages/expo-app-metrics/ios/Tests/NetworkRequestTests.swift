@@ -355,6 +355,38 @@ struct NetworkRequestURLProtocolTests {
     #expect(recorded == nil)
   }
 
+  /**
+   Forwarding a request that carries a body must preserve it. Foundation converts the in-memory
+   `httpBody` into an `httpBodyStream` before `startLoading`, and a plain `dataTask` would drop it
+   — so the protocol forwards via `uploadTask(withStreamedRequest:)` and replays the stream. The
+   fake server echoes whatever body it receives, so a non-empty echo proves the body made it
+   through.
+   */
+  @Test
+  func `forwards the request body for uploads`() async throws {
+    NetworkRequestURLProtocol.overrideSharedSession(
+      NetworkRequestURLProtocol.makeForwardingSession(extraProtocols: [FakeServerProtocol.self])
+    )
+    defer {
+      NetworkRequestURLProtocol.overrideSharedSession(nil)
+    }
+
+    let outerConfig = URLSessionConfiguration.ephemeral
+    outerConfig.protocolClasses = [NetworkRequestURLProtocol.self, FakeServerProtocol.self]
+    let session = URLSession(configuration: outerConfig)
+
+    let payload = Data("{\"hello\":\"world\"}".utf8)
+    var request = URLRequest(url: URL(string: "https://fake.test/echo")!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = payload
+
+    let (data, response) = try await session.data(for: request)
+
+    #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    #expect(data == payload)
+  }
+
   private func clearMonitor() async {
     // No public clear API on the shared monitor — tests filter by URL when reading instead.
   }
@@ -414,8 +446,9 @@ private final class CollectingDelegate: NetworkRequestObserverDelegate, @uncheck
 }
 
 /**
- A trivial `URLProtocol` that pretends to be a server: returns 200 with a `hi` body for any
- request. Sits at the tail of the protocol chain in the test's outer session.
+ A trivial `URLProtocol` that pretends to be a server. Echoes the request body back when there is
+ one (so tests can assert POST/PUT payloads survived forwarding), otherwise returns a `hi` body.
+ Sits at the tail of the protocol chain in the test's outer session.
  */
 private final class FakeServerProtocol: URLProtocol {
   override class func canInit(with request: URLRequest) -> Bool {
@@ -430,9 +463,39 @@ private final class FakeServerProtocol: URLProtocol {
     let url = request.url!
     let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-    client?.urlProtocol(self, didLoad: Data("hi".utf8))
+    let body = Self.readBody(from: request) ?? Data("hi".utf8)
+    client?.urlProtocol(self, didLoad: body)
     client?.urlProtocolDidFinishLoading(self)
   }
 
   override func stopLoading() {}
+
+  /**
+   Reads the request body, preferring the in-memory `httpBody` and falling back to draining
+   `httpBodyStream` — by the time a request reaches a `URLProtocol`, Foundation has usually
+   converted the body to a stream, which is exactly the path we want to exercise.
+   */
+  private static func readBody(from request: URLRequest) -> Data? {
+    if let body = request.httpBody {
+      return body
+    }
+    guard let stream = request.httpBodyStream else {
+      return nil
+    }
+    stream.open()
+    defer {
+      stream.close()
+    }
+    var data = Data()
+    let bufferSize = 1024
+    var buffer = [UInt8](repeating: 0, count: bufferSize)
+    while stream.hasBytesAvailable {
+      let read = stream.read(&buffer, maxLength: bufferSize)
+      if read <= 0 {
+        break
+      }
+      data.append(buffer, count: read)
+    }
+    return data.isEmpty ? nil : data
+  }
 }

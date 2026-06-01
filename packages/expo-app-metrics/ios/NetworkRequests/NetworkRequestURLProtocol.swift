@@ -32,11 +32,16 @@ import ExpoModulesCore
  */
 final class NetworkRequestURLProtocol: URLProtocol {
   /**
-   Header name callers can set to opt a request out of observation. Requests carrying this header
+   Header name any caller can set to opt a request out of observation. Requests carrying this header
    are not handled by us (`canInit` returns false), so they bypass observation entirely and the
    header is forwarded to the server as-is. Use a header value that's safe to leak to the endpoint.
+
+   No `X-` prefix per RFC 6648. expo-observe sets it on its telemetry uploads to avoid observing
+   itself; third-party code can do the same to keep its own traffic out of the stream. Callers that
+   can't import this constant (e.g. expo-observe, which must not depend on app-metrics internals)
+   hardcode the same literal — keep the two in sync if this ever changes.
    */
-  static let internalHeaderName = "X-Expo-AppMetrics-Internal"
+  static let internalHeaderName = "Expo-AppMetrics-Skip"
 
   /**
    Registers the protocol class globally. Idempotent — `URLProtocol.registerClass` deduplicates
@@ -51,6 +56,12 @@ final class NetworkRequestURLProtocol: URLProtocol {
   private var startDate = Date()
   private var capturedMetrics: URLSessionTaskMetrics?
   private var capturedResponse: HTTPURLResponse?
+
+  /**
+   The original request's body stream, retained so we can hand a fresh copy to the inner session
+   on demand. See `startLoading` for why this is necessary.
+   */
+  private var bodyStream: InputStream?
 
   // MARK: - URLProtocol
 
@@ -83,8 +94,20 @@ final class NetworkRequestURLProtocol: URLProtocol {
     }
     URLProtocol.setProperty(true, forKey: Self.handledMarkerKey, in: mutable)
 
+    // By the time a request reaches `startLoading`, Foundation has already converted any in-memory
+    // `httpBody` into an `httpBodyStream`. A plain `dataTask(with:)` ignores `httpBodyStream`, so
+    // forwarding that way would silently drop POST/PUT bodies for the whole app. We instead retain
+    // the stream and forward via `uploadTask(withStreamedRequest:)`, serving the stream back to the
+    // inner session through the delegate's `needNewBodyStream` callback (which also lets us replay
+    // it across redirects). Requests without a body fall through to a `dataTask`.
     let session = Self.sharedSessionStorage.withLock { $0 }
-    let task = session.dataTask(with: mutable as URLRequest)
+    let task: URLSessionTask
+    if let stream = mutable.httpBodyStream {
+      bodyStream = stream
+      task = session.uploadTask(withStreamedRequest: mutable as URLRequest)
+    } else {
+      task = session.dataTask(with: mutable as URLRequest)
+    }
     Self.bridge.attach(self, to: task)
     sessionTask = task
 
@@ -119,6 +142,19 @@ final class NetworkRequestURLProtocol: URLProtocol {
 
   fileprivate func capture(metrics: URLSessionTaskMetrics) {
     capturedMetrics = metrics
+  }
+
+  /**
+   Hands the retained request body stream to the inner session. Returns the stream once and clears
+   it afterward: `InputStream`s aren't rewindable, so a redirect that needs the body re-sent can't
+   be served from the same stream — the same limitation `URLSession` itself has when an app vends a
+   one-shot stream. The common case (a single non-redirecting upload) is fully covered.
+   */
+  fileprivate func provideBodyStream() -> InputStream? {
+    defer {
+      bodyStream = nil
+    }
+    return bodyStream
   }
 
   fileprivate func didComplete(error: Error?) {
@@ -161,9 +197,9 @@ final class NetworkRequestURLProtocol: URLProtocol {
 
   /**
    A single shared `URLSession` is used to forward all observed requests. Its configuration
-   explicitly excludes us from `protocolClasses` to break recursion, and uses no cache so that
-   caching behavior on the *outer* session is faithfully replayed (we don't want to short-circuit
-   the client's view of cache hits — those are reported by the outer session's own logic).
+   explicitly excludes us from `protocolClasses` to break recursion, and disables its own cache
+   (`urlCache = nil`, reload-ignoring policy) so caching is left entirely to the outer session the
+   client created — the inner session never short-circuits a request with its own cached copy.
 
    Mutex-wrapped so tests can swap it in (`overrideSharedSession`) without tripping Swift 6's
    "nonisolated global shared mutable state" check.
@@ -184,6 +220,11 @@ final class NetworkRequestURLProtocol: URLProtocol {
     protocols.removeAll { $0 == NetworkRequestURLProtocol.self }
     protocols = extraProtocols + protocols
     configuration.protocolClasses = protocols
+    // Disable the inner session's own cache layer. The outer session the client gave us is the
+    // authoritative one (we always hand it `cacheStoragePolicy: .notAllowed`), so an independent
+    // cache on the inner session would be invisible to the caller and could serve stale responses.
+    configuration.urlCache = nil
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     return URLSession(configuration: configuration, delegate: bridge, delegateQueue: nil)
   }
 
@@ -250,6 +291,16 @@ private final class BridgeDelegate: NSObject, URLSessionDataDelegate {
 
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     lookup(dataTask)?.didReceive(data: data)
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    needNewBodyStream completionHandler: @escaping (InputStream?) -> Void
+  ) {
+    // Called for streamed-body uploads (`uploadTask(withStreamedRequest:)`). We forward the body
+    // stream we captured from the original request so POST/PUT payloads aren't dropped.
+    completionHandler(lookup(task)?.provideBodyStream())
   }
 
   func urlSession(

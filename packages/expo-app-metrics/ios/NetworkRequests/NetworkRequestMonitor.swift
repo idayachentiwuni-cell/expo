@@ -43,7 +43,10 @@ public final class NetworkRequestMonitor: Sendable {
   init() {}
 
   /**
-   Registers the URL protocol class globally. Idempotent — subsequent calls are no-ops.
+   Confirms the URL protocol class is registered globally. The app-delegate subscriber already
+   registers it synchronously at launch (before the first request); this re-asserts it for any
+   path that reaches the monitor without going through the subscriber. Idempotent — subsequent
+   calls and `URLProtocol.registerClass` itself are no-ops.
    */
   func start() {
     if started {

@@ -3,8 +3,8 @@
 import ExpoModulesCore
 import Foundation
 
-/** Event names emitted by `NetworkRequestObserver`. Kept at module scope so `AppMetricsModule`'s
- `Events(...)` declaration uses the same string literals. */
+/** Event names emitted by `NetworkRequestObserver`, matching the keys in the JS
+ `NetworkRequestObserverEvents` type. */
 let REQUEST_STARTED_EVENT = "requestStarted"
 let REQUEST_COMPLETED_EVENT = "requestCompleted"
 

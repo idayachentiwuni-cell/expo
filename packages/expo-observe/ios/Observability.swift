@@ -155,8 +155,10 @@ internal struct ObservabilityManager {
       "Content-Type": "application/json",
       // Tells `NetworkRequestURLProtocol` to skip observation so our own telemetry uploads don't
       // get logged back into the network-request stream. The header reaches o.expo.dev unchanged
-      // (we control that endpoint, so 1 byte of harmless overhead is fine).
-      "X-Expo-AppMetrics-Internal": "1"
+      // (we control that endpoint, so the harmless overhead is fine). The name is duplicated here
+      // rather than imported: expo-observe must not depend on expo-app-metrics internals. Keep it
+      // in sync with `NetworkRequestURLProtocol.internalHeaderName` in expo-app-metrics.
+      "Expo-AppMetrics-Skip": "1"
     ]
     request.httpBody = try body.toJSONData([])
 
