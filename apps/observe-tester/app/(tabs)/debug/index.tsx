@@ -1,7 +1,7 @@
 import AppMetrics from 'expo-app-metrics';
 import { useObserve } from 'expo-observe';
 import { useEffect, useState } from 'react';
-import { Platform, ScrollView, StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { CrashReportsSection } from '@/components/CrashReportsSection';
@@ -30,12 +30,8 @@ export default function Debug() {
       contentContainerStyle={styles.container}>
       <LogEventsSection />
       <Divider />
-      {Platform.OS === 'ios' ? (
-        <>
-          <NetworkRequestObserverSection />
-          <Divider />
-        </>
-      ) : null}
+      <NetworkRequestObserverSection />
+      <Divider />
       <CrashReportsSection />
       {typeof AppMetrics.triggerCrash === 'function' ? <Divider /> : null}
       <GlobalAttributesSection />

@@ -357,8 +357,6 @@ export type NetworkRequestObserverEvents = {
  *
  * Subscribe to events via `addListener`/`removeListener` (inherited from the SharedObject base).
  *
- * @platform ios
- *
  * @example
  * ```ts
  * import AppMetrics from 'expo-app-metrics';
@@ -446,8 +444,6 @@ export interface ExpoAppMetricsModuleType {
    * Class for subscribing to HTTP requests observed by the native networking interceptor.
    * Construct an instance to begin receiving `requestStarted`/`requestCompleted` events;
    * release the instance (drop all references) to stop.
-   *
-   * @platform ios
    */
   NetworkRequestObserver: typeof NetworkRequestObserver;
 }
