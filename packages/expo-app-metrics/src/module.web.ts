@@ -17,7 +17,8 @@ class NetworkRequestObserverWeb extends globalThis.expo.SharedObject<NetworkRequ
 }
 
 class ExpoAppMetricsModule extends NativeModule implements ExpoAppMetricsModuleType {
-  NetworkRequestObserver = NetworkRequestObserverWeb as unknown as ExpoAppMetricsModuleType['NetworkRequestObserver'];
+  NetworkRequestObserver =
+    NetworkRequestObserverWeb as unknown as ExpoAppMetricsModuleType['NetworkRequestObserver'];
 
   addCustomMetricToSession(metric: Metric): Promise<void> {
     throw new Error('Method not implemented.');

@@ -1,9 +1,8 @@
-import AppMetrics, {
-  type NetworkRequestStartedEvent,
-  type NetworkRequestCompletedEvent,
+import {
+  useNetworkRequestObserver,
   type NetworkRequestRedirect,
 } from 'expo-app-metrics';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/utils/theme';
@@ -42,61 +41,47 @@ export function NetworkRequestObserverSection() {
   // so we don't render duplicates when both events arrive.
   const completedIds = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (!AppMetrics.NetworkRequestObserver) {
-      return;
-    }
-    const observer = new AppMetrics.NetworkRequestObserver();
-    const startedSub = observer.addListener(
-      'requestStarted',
-      (event: NetworkRequestStartedEvent) => {
-        setRows((prev) => {
-          const next: StartedRow = {
-            kind: 'started',
-            id: event.id,
-            url: event.url,
-            method: event.method,
-            startedAt: Date.parse(event.startedAt),
-          };
-          return [next, ...prev].slice(0, RECENT_LIMIT);
-        });
-      }
-    );
-    const completedSub = observer.addListener(
-      'requestCompleted',
-      (event: NetworkRequestCompletedEvent) => {
-        completedIds.current.add(event.id);
-        setRows((prev) => {
-          const completed: CompletedRow = {
-            kind: 'completed',
-            id: event.id,
-            url: event.url,
-            method: event.method,
-            statusCode: event.statusCode,
-            totalDuration: event.totalDuration,
-            requestBytesSent: event.requestBytesSent,
-            responseBytesReceived: event.responseBytesReceived,
-            errorDescription: event.errorDescription,
-            redirects: event.redirects,
-            networkProtocol: event.networkProtocol,
-            wasCached: event.wasCached,
-          };
-          // Replace the matching started row if it's still on screen, else prepend.
-          const existing = prev.findIndex((r) => r.id === event.id);
-          if (existing >= 0) {
-            const out = prev.slice();
-            out[existing] = completed;
-            return out;
-          }
-          return [completed, ...prev].slice(0, RECENT_LIMIT);
-        });
-      }
-    );
-    return () => {
-      startedSub.remove();
-      completedSub.remove();
-    };
-  }, []);
+  useNetworkRequestObserver({
+    onStarted(event) {
+      setRows((prev) => {
+        const next: StartedRow = {
+          kind: 'started',
+          id: event.id,
+          url: event.url,
+          method: event.method,
+          startedAt: Date.parse(event.startedAt),
+        };
+        return [next, ...prev].slice(0, RECENT_LIMIT);
+      });
+    },
+    onCompleted(event) {
+      completedIds.current.add(event.id);
+      setRows((prev) => {
+        const completed: CompletedRow = {
+          kind: 'completed',
+          id: event.id,
+          url: event.url,
+          method: event.method,
+          statusCode: event.statusCode,
+          totalDuration: event.totalDuration,
+          requestBytesSent: event.requestBytesSent,
+          responseBytesReceived: event.responseBytesReceived,
+          errorDescription: event.errorDescription,
+          redirects: event.redirects,
+          networkProtocol: event.networkProtocol,
+          wasCached: event.wasCached,
+        };
+        // Replace the matching started row if it's still on screen, else prepend.
+        const existing = prev.findIndex((r) => r.id === event.id);
+        if (existing >= 0) {
+          const out = prev.slice();
+          out[existing] = completed;
+          return out;
+        }
+        return [completed, ...prev].slice(0, RECENT_LIMIT);
+      });
+    },
+  });
 
   function fireSample() {
     fetch('https://expo.dev').catch(() => {});
