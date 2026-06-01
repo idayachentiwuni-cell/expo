@@ -1,3 +1,7 @@
+import { useEventListener } from 'expo';
+import { useReleasingSharedObject } from 'expo-modules-core';
+
+import AppMetrics from './module';
 import type {
   NetworkRequestCompletedEvent,
   NetworkRequestObserver,
@@ -5,19 +9,31 @@ import type {
 } from './types';
 
 export type UseNetworkRequestObserverOptions = {
-  /** Called when a request begins. iOS only — never fires on other platforms. */
+  /**
+   * Called when a request begins. Fired before any response or timing data exists; correlate
+   * with the matching `onCompleted` call via the shared `id`.
+   */
   onStarted?: (event: NetworkRequestStartedEvent) => void;
-  /** Called when a request finishes. iOS only — never fires on other platforms. */
+
+  /**
+   * Called when a request finishes (successfully or otherwise). Payload includes status,
+   * timings, byte counts, protocol, cache hit, error, and the redirect chain.
+   */
   onCompleted?: (event: NetworkRequestCompletedEvent) => void;
 };
 
 /**
- * No-op fallback on platforms other than iOS. The native interceptor only ships on iOS, so
- * neither `onStarted` nor `onCompleted` will ever fire here. Returns `null` so cross-platform
- * callers can guard on the result if they need to react differently.
+ * Subscribes to the native network-request observer for the lifetime of the component. Each
+ * mount allocates a `NetworkRequestObserver` SharedObject; unmount releases it and the native
+ * delegate slot is reclaimed.
  */
 export function useNetworkRequestObserver(
-  _options: UseNetworkRequestObserverOptions = {}
-): NetworkRequestObserver | null {
-  return null;
+  options: UseNetworkRequestObserverOptions = {}
+): NetworkRequestObserver {
+  const observer = useReleasingSharedObject(() => new AppMetrics.NetworkRequestObserver(), []);
+
+  useEventListener(observer, 'requestStarted', (event) => options.onStarted?.(event));
+  useEventListener(observer, 'requestCompleted', (event) => options.onCompleted?.(event));
+
+  return observer;
 }

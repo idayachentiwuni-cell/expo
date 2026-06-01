@@ -1,4 +1,4 @@
-import { NativeModule, registerWebModule } from 'expo';
+import { NativeModule, registerWebModule, SharedObject } from 'expo';
 
 import type {
   ExpoAppMetricsModuleType,
@@ -11,7 +11,7 @@ import type {
 
 export * from './types';
 
-class NetworkRequestObserverWeb extends globalThis.expo.SharedObject<NetworkRequestObserverEvents> {
+class NetworkRequestObserverWeb extends SharedObject<NetworkRequestObserverEvents> {
   // Web has no native interceptor, so this never emits. Kept as a no-op so cross-platform code
   // can construct it without guarding on Platform.OS.
 }
